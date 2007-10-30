@@ -23,6 +23,12 @@ config IOSCHED_TEST
 	  according to the test case and declare PASS/FAIL according to the
 	  requests completion error code.
 
+config IOSCHED_FIFO
+	tristate "Fifo I/O scheduler"
+	default y
+	---help---
+	  A no-op scheduler that really does nothing.
+
 config IOSCHED_DEADLINE
 	tristate "Deadline I/O scheduler"
 	default y
@@ -122,6 +128,9 @@ choice
 	config DEFAULT_DEADLINE
 		bool "Deadline" if IOSCHED_DEADLINE=y
 
+	config DEFAULT_FIFO
+		bool "Fifo" if IOSCHED_FIFO=y
+
 	config DEFAULT_ROW
 		bool "ROW" if IOSCHED_ROW=y
 		help
@@ -163,6 +172,7 @@ config DEFAULT_IOSCHED
 	string
 	default "deadline" if DEFAULT_DEADLINE
 	default "row" if DEFAULT_ROW
+	default "fifo" if DEFAULT_FIFO
 	default "cfq" if DEFAULT_CFQ
 	default "bfq" if DEFAULT_BFQ
         default "sio" if DEFAULT_SIO
