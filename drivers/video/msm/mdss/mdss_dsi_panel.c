@@ -28,6 +28,10 @@
 #include <linux/gpio.h>
 #include <linux/interrupt.h>
 
+#ifdef CONFIG_POWERSUSPEND
+#include <linux/powersuspend.h>
+#endif
+
 #include "mdss_dsi.h"
 #include "dsi_v2.h"
 
@@ -594,6 +598,10 @@ static int mdss_dsi_panel_on(struct mdss_panel_data *pdata)
 
 	lcd_notifier_call_chain(LCD_EVENT_ON_START);
 
+#ifdef CONFIG_POWERSUSPEND
+	set_power_suspend_state_panel_hook(POWER_SUSPEND_INACTIVE);
+#endif
+
 	ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata,
 				panel_data);
 	mipi  = &pdata->panel_info.mipi;
@@ -662,6 +670,10 @@ disable_regs:
 	mdss_dsi_panel_regulator_on(pdata, 0);
 
 	lcd_notifier_call_chain(LCD_EVENT_OFF_END);
+
+#ifdef CONFIG_POWERSUSPEND
+	set_power_suspend_state_panel_hook(POWER_SUSPEND_ACTIVE);
+#endif
 
 	pr_info("%s-:\n", __func__);
 
