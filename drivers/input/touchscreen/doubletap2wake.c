@@ -58,7 +58,7 @@ MODULE_LICENSE("GPLv2");
 
 /* Tuneables */
 #define DT2W_DEBUG		0
-#define DT2W_DEFAULT		0
+#define DT2W_DEFAULT		2
 
 #define DT2W_PWRKEY_DUR		60
 #define DT2W_FEATHER		200
@@ -282,12 +282,14 @@ static struct input_handler dt2w_input_handler = {
 };
 
 #ifdef CONFIG_POWERSUSPEND
-static void dt2w_power_suspend(struct power_suspend *h) {
+static void dt2w_power_suspend(struct power_suspend *handler) {
 	scr_suspended = true;
+	return;
 }
 
-static void dt2w_power_resume(struct power_suspend *h) {
+static void dt2w_power_resume(struct power_suspend *handler) {
 	scr_suspended = false;
+	return;
 }
 
 static struct power_suspend dt2w_power_suspend_handler = {
@@ -416,6 +418,7 @@ static int __init doubletap2wake_init(void)
 	if (rc) {
 		pr_warn("%s: sysfs_create_file failed for doubletap2wake\n", __func__);
 	}
+
 	rc = sysfs_create_file(android_touch_kobj, &dev_attr_doubletap2wake_version.attr);
 	if (rc) {
 		pr_warn("%s: sysfs_create_file failed for doubletap2wake_version\n", __func__);
