@@ -1464,7 +1464,7 @@ static void ct406_suspend(struct power_suspend *handler)
 #ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
 	/* prevent sensor to sleep when DT2W enabled */
 	if (dt2w_switch > 0)
-		return 0;
+		return;
 #endif
 
 	if (ct406_debug & CT406_DBG_SUSPEND_RESUME)
@@ -1487,7 +1487,7 @@ static void ct406_resume(struct power_suspend *handler)
 #ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
 	/* prevent sensor to sleep when DT2W enabled */
 	if (dt2w_switch > 0)
-		return 0;
+		return;
 #endif
 
 	if (ct406_debug & CT406_DBG_SUSPEND_RESUME)
