@@ -64,6 +64,11 @@ include/linux/version.h
 include/generated
 arch/*/include/generated
 
+clarity-M-condor/boot/zImage-dtb
+clarity-M-condor/system/lib/modules/*
+clarity-N-condor/boot/zImage-dtb
+clarity-N-condor/system/lib/modules/*
+
 # stgit generated dirs
 patches-*
 
