@@ -29,6 +29,9 @@
 #include <linux/lcd_notify.h>
 #include <linux/gpio.h>
 #include <linux/interrupt.h>
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+#include <linux/input/doubletap2wake.h>
+#endif
 
 #include "mdss_dsi.h"
 #include "mdss_fb.h"
@@ -684,7 +687,6 @@ static int mdss_dsi_panel_cont_splash_on(struct mdss_panel_data *pdata)
 		pdata->panel_info.no_solid_fill)
 		mdss_dsi_sw_reset(pdata);
 
-	lcd_notifier_call_chain(LCD_EVENT_ON_START);
 	lcd_notifier_call_chain(LCD_EVENT_ON_END);
 
 	pdata->panel_info.cont_splash_esd_rdy = true;
@@ -792,6 +794,10 @@ static int mdss_dsi_panel_on(struct mdss_panel_data *pdata)
 		return -EINVAL;
 	}
 
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	dt2w_scr_suspended = false;
+#endif
+
 	lcd_notifier_call_chain(LCD_EVENT_ON_START);
 
 	ctrl = container_of(pdata, struct mdss_dsi_ctrl_pdata,
@@ -896,6 +902,10 @@ static int mdss_dsi_panel_off(struct mdss_panel_data *pdata)
 		pr_err("%s: Invalid input data\n", __func__);
 		return -EINVAL;
 	}
+
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	dt2w_scr_suspended = true;
+#endif
 
 	lcd_notifier_call_chain(LCD_EVENT_OFF_START);
 

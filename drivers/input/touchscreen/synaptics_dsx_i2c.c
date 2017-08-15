@@ -38,6 +38,10 @@
 #include <linux/input/mt.h>
 #endif
 
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+#include <linux/input/doubletap2wake.h>
+#endif
+
 #define DRIVER_NAME "synaptics_dsx_i2c"
 #define INPUT_PHYS_NAME "synaptics_dsx_i2c/input0"
 #define TYPE_B_PROTOCOL
@@ -702,10 +706,8 @@ static int synaptics_rmi4_irq_enable(struct synaptics_rmi4_data *rmi4_data,
 static void synaptics_dsx_sensor_state(struct synaptics_rmi4_data *rmi4_data,
 		int state);
 
-#if defined(CONFIG_FB) && !defined(CONFIG_MMI_PANEL_NOTIFICATIONS)
 static int synaptics_dsx_panel_cb(struct notifier_block *nb,
 		unsigned long event, void *data);
-#endif
 
 static int synaptics_rmi4_suspend(struct device *dev);
 
@@ -1066,6 +1068,15 @@ static void synaptics_dsx_sensor_state(struct synaptics_rmi4_data *rmi4_data,
 
 		synaptics_rmi4_irq_enable(rmi4_data, true);
 			break;
+
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	case STATE_PREVENT_SLEEP:
+		synaptics_dsx_wait_for_idle(rmi4_data);
+		synaptics_rmi4_irq_enable(rmi4_data, false);
+		if (rmi4_data->sensor_sleep)
+			synaptics_rmi4_sensor_wake(rmi4_data);
+		break;
+#endif
 
 	case STATE_STANDBY:
 		synaptics_rmi4_irq_enable(rmi4_data, false);
@@ -2145,11 +2156,21 @@ static int synaptics_rmi4_irq_enable(struct synaptics_rmi4_data *rmi4_data,
 				"%s: Started irq thread\n", __func__);
 
 		rmi4_data->irq_enabled = true;
+
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+		if (dt2w_switch > 0)
+			irq_set_irq_wake(rmi4_data->irq, 1);
+#endif
 	} else {
 		if (rmi4_data->irq_enabled) {
 			disable_irq(rmi4_data->irq);
 			free_irq(rmi4_data->irq, rmi4_data);
 			rmi4_data->irq_enabled = false;
+
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+		if (dt2w_switch > 0)
+			irq_set_irq_wake(rmi4_data->irq, 0);
+#endif
 
 		dev_dbg(&rmi4_data->i2c_client->dev,
 				"%s: Stopped irq thread\n", __func__);
@@ -3267,25 +3288,14 @@ static int __devinit synaptics_rmi4_probe(struct i2c_client *client,
 
 	init_waitqueue_head(&rmi4_data->wait);
 
-#if defined(CONFIG_MMI_PANEL_NOTIFICATIONS)
-	rmi4_data->panel_nb.pre_display_off = synaptics_rmi4_suspend;
-	rmi4_data->panel_nb.display_on = synaptics_rmi4_resume;
-	rmi4_data->panel_nb.dev = &client->dev;
-	if (!mmi_panel_register_notifier(&rmi4_data->panel_nb))
-		pr_info("registered MMI panel notifier\n");
-	else
-		dev_err(&client->dev,
-				"%s: Unable to register MMI notifier\n",
-				__func__);
-#elif defined(CONFIG_FB)
 	rmi4_data->panel_nb.notifier_call = synaptics_dsx_panel_cb;
-	if (!fb_register_client(&rmi4_data->panel_nb))
-		pr_debug("registered FB notifier\n");
+	if (!lcd_register_client(&rmi4_data->panel_nb))
+		pr_debug("registered lcd notifier\n");
 	else
 		dev_err(&client->dev,
-				"%s: Unable to register FB notifier\n",
+				"%s: Unable to register lcd notifier\n",
 				__func__);
-#endif
+
 	mutex_lock(&exp_fn_ctrl_mutex);
 	if (!exp_fn_ctrl.inited) {
 		mutex_init(&exp_fn_ctrl.list_mutex);
@@ -3325,11 +3335,7 @@ err_sysfs:
 				&attrs[attr_count].attr);
 	}
 
-#if defined(CONFIG_MMI_PANEL_NOTIFICATIONS)
-	mmi_panel_unregister_notifier(&rmi4_data->panel_nb);
-#elif defined(CONFIG_FB)
-	fb_unregister_client(&rmi4_data->panel_nb);
-#endif
+	lcd_unregister_client(&rmi4_data->panel_nb);
 
 err_query_device:
 	if (rmi4_data->input_registered) {
@@ -3397,11 +3403,7 @@ static int __devexit synaptics_rmi4_remove(struct i2c_client *client)
 		regulator_put(rmi4_data->regulator);
 	}
 
-#if defined(CONFIG_MMI_PANEL_NOTIFICATIONS)
-	mmi_panel_unregister_notifier(&rmi4_data->panel_nb);
-#elif defined(CONFIG_FB)
-	fb_unregister_client(&rmi4_data->panel_nb);
-#endif
+	lcd_unregister_client(&rmi4_data->panel_nb);
 	synaptics_rmi4_cleanup(rmi4_data);
 	kfree(rmi4_data);
 
@@ -3575,27 +3577,27 @@ static void synaptics_rmi4_sensor_wake(struct synaptics_rmi4_data *rmi4_data)
 	return;
 }
 
-#if defined(CONFIG_FB) && !defined(CONFIG_MMI_PANEL_NOTIFICATIONS)
 static int synaptics_dsx_panel_cb(struct notifier_block *nb,
 		unsigned long event, void *data)
 {
-	struct fb_event *evdata = data;
-	int *blank;
 	struct synaptics_rmi4_data *rmi4_data =
 		container_of(nb, struct synaptics_rmi4_data, panel_nb);
 
-	if (evdata && evdata->data && event == FB_EVENT_BLANK) {
-		blank = evdata->data;
-		if (*blank == FB_BLANK_UNBLANK) {
-			synaptics_rmi4_resume(&(rmi4_data->input_dev->dev));
-		} else if (*blank == FB_BLANK_POWERDOWN) {
-			synaptics_rmi4_suspend(&(rmi4_data->input_dev->dev));
-		}
+	pr_info("%s: event = %lu\n", __func__, event);
+
+	switch (event) {
+	case LCD_EVENT_ON_END:
+		synaptics_rmi4_resume(&(rmi4_data->input_dev->dev));
+		break;
+	case LCD_EVENT_OFF_END:
+		synaptics_rmi4_suspend(&(rmi4_data->input_dev->dev));
+		break;
+	default:
+		break;
 	}
 
 	return 0;
 }
-#endif
 
 static void synaptics_dsx_resumeinfo_start(
 		struct synaptics_rmi4_data *rmi4_data)
@@ -3694,6 +3696,13 @@ static int synaptics_rmi4_suspend(struct device *dev)
 	const struct synaptics_dsx_platform_data *platform_data =
 			rmi4_data->board;
 
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	if (dt2w_switch > 0 &&
+		!dt2w_prox_covered) {
+		synaptics_dsx_sensor_state(rmi4_data, STATE_PREVENT_SLEEP);
+		return 0;
+	}
+#endif
 	synaptics_dsx_sensor_state(rmi4_data, STATE_SUSPEND);
 	rmi4_data->poweron = false;
 
@@ -3719,6 +3728,13 @@ static int synaptics_rmi4_suspend(struct device *dev)
 	return 0;
 }
 
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+void dt2w_touch_suspend(void)
+{
+	synaptics_rmi4_suspend(&(exp_fn_ctrl.rmi4_data_ptr->input_dev->dev));
+}
+#endif
+
  /**
  * synaptics_rmi4_resume()
  *
@@ -3732,6 +3748,11 @@ static int synaptics_rmi4_suspend(struct device *dev)
 static int synaptics_rmi4_resume(struct device *dev)
 {
 	struct synaptics_rmi4_data *rmi4_data = dev_get_drvdata(dev);
+
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	if (dt2w_switch > 0)
+		synaptics_dsx_sensor_state(rmi4_data, STATE_ACTIVE);
+#endif
 
 	synaptics_dsx_resumeinfo_start(rmi4_data);
 
@@ -3786,6 +3807,13 @@ static int synaptics_rmi4_resume(struct device *dev)
 
 	return 0;
 }
+
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+void dt2w_touch_resume(void)
+{
+	synaptics_rmi4_resume(&(exp_fn_ctrl.rmi4_data_ptr->input_dev->dev));
+}
+#endif
 
 static const struct dev_pm_ops synaptics_rmi4_dev_pm_ops = {
 	.suspend = synaptics_rmi4_suspend,

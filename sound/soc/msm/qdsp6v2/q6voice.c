@@ -17,6 +17,9 @@
 #include <linux/wait.h>
 #include <linux/mutex.h>
 #include <linux/msm_audio_ion.h>
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+#include <linux/input/doubletap2wake.h>
+#endif
 
 #include <asm/mach-types.h>
 #include <mach/socinfo.h>
@@ -96,6 +99,10 @@ static int voice_alloc_and_map_cal_mem(struct voice_data *v);
 static int voice_alloc_and_map_oob_mem(struct voice_data *v);
 
 static struct voice_data *voice_get_session_by_idx(int idx);
+
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+bool dt2w_in_call = false;
+#endif
 
 static void voice_itr_init(struct voice_session_itr *itr,
 			   u32 session_id)
@@ -4778,6 +4785,11 @@ int voc_end_voice_call(uint32_t session_id)
 		return -EINVAL;
 	}
 
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	if (dt2w_switch > 0)
+		dt2w_in_call = false;
+#endif
+
 	mutex_lock(&v->lock);
 
 	if (v->voc_state == VOC_RUN || v->voc_state == VOC_ERROR ||
@@ -4791,6 +4803,7 @@ int voc_end_voice_call(uint32_t session_id)
 		voice_destroy_mvm_cvs_session(v);
 
 		v->voc_state = VOC_RELEASE;
+
 	} else {
 		pr_err("%s: Error: End voice called in state %d\n",
 			__func__, v->voc_state);
@@ -4817,6 +4830,12 @@ int voc_standby_voice_call(uint32_t session_id)
 		pr_err("%s: v is NULL\n", __func__);
 		return -EINVAL;
 	}
+
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	if (dt2w_switch > 0)
+		dt2w_in_call = true;
+#endif
+
 	if (v->voc_state == VOC_RUN) {
 		apr_mvm = common.apr_q6_mvm;
 		if (!apr_mvm) {
@@ -4848,6 +4867,7 @@ int voc_standby_voice_call(uint32_t session_id)
 		}
 		v->voc_state = VOC_STANDBY;
 	}
+
 fail:
 	return ret;
 }
@@ -4906,6 +4926,12 @@ int voc_resume_voice_call(uint32_t session_id)
 		goto fail;
 	}
 	v->voc_state = VOC_RUN;
+
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	if (dt2w_switch > 0)
+		dt2w_in_call = true;
+#endif
+
 	return 0;
 fail:
 	return -EINVAL;
@@ -4921,6 +4947,11 @@ int voc_start_voice_call(uint32_t session_id)
 
 		return -EINVAL;
 	}
+
+#ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
+	if (dt2w_switch > 0)
+		dt2w_in_call = true;
+#endif
 
 	mutex_lock(&v->lock);
 
@@ -5011,6 +5042,7 @@ int voc_start_voice_call(uint32_t session_id)
 		ret = -EINVAL;
 		goto fail;
 	}
+
 fail:
 	mutex_unlock(&v->lock);
 	return ret;
