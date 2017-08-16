@@ -579,7 +579,7 @@ static void do_dbs_timer(struct work_struct *work)
 	if (num_online_cpus() > 1)
 		delay -= jiffies % delay;
 
-	mod_delayed_work_on(cpu, dbs_wq, &dbs_info->work, delay);
+	queue_delayed_work_on(cpu, dbs_wq, &dbs_info->work, delay);
 	mutex_unlock(&dbs_info->timer_mutex);
 }
 
@@ -594,7 +594,7 @@ static inline void dbs_timer_init(struct cpu_dbs_info_s *dbs_info)
 		delay -= jiffies % delay;
 
 	INIT_DEFERRABLE_WORK(&dbs_info->work, do_dbs_timer);
-	mod_delayed_work_on(cpu, dbs_wq, &dbs_info->work, delay);
+	queue_delayed_work_on(cpu, dbs_wq, &dbs_info->work, delay);
 }
 
 static inline void dbs_timer_exit(struct cpu_dbs_info_s *dbs_info)
