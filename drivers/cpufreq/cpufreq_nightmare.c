@@ -612,7 +612,7 @@ static void do_nightmare_timer(struct work_struct *work)
 		delay -= jiffies % delay;
 	}
 
-	mod_delayed_work_on(cpu, system_wq,
+	queue_delayed_work_on(cpu, system_wq,
 			&this_nightmare_cpuinfo->work, delay);
 	mutex_unlock(&this_nightmare_cpuinfo->timer_mutex);
 }
@@ -670,8 +670,8 @@ static int cpufreq_governor_nightmare(struct cpufreq_policy *policy,
 			delay -= jiffies % delay;
 		}
 
-		INIT_DEFERRABLE_WORK(&this_nightmare_cpuinfo->work, do_nightmare_timer);
-		mod_delayed_work_on(cpu,
+		INIT_DELAYED_WORK_DEFERRABLE(&this_nightmare_cpuinfo->work, do_nightmare_timer);
+		queue_delayed_work_on(cpu,
 			system_wq, &this_nightmare_cpuinfo->work, delay);
 
 		break;
