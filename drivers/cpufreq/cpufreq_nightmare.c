@@ -84,13 +84,8 @@ static struct nightmare_tuners {
 	.inc_cpu_load_at_min_freq = 40,
 	.inc_cpu_load = 60,
 	.dec_cpu_load = 60,
-#ifdef CONFIG_MACH_LGE
-	.freq_for_responsiveness = 1728000,
-	.freq_for_responsiveness_max = 2265600,
-#else
-	.freq_for_responsiveness = 1566000,
-	.freq_for_responsiveness_max = 1890000,
-#endif
+	.freq_for_responsiveness = 998400,
+	.freq_for_responsiveness_max = 1190400,
 	.freq_step_at_min_freq = 40,
 	.freq_step = 50,
 	.freq_up_brake_at_min_freq = 40,
@@ -429,7 +424,7 @@ static ssize_t store_io_is_busy(struct kobject *a, struct attribute *b,
 	if (input == nightmare_tuners_ins.io_is_busy)
 		return count;
 
-	nightmare_tuners_ins.io_is_busy = !!input;
+	nightmare_tuners_ins.io_is_busy = input;
 
 	/* we need to re-evaluate prev_cpu_idle */
 	get_online_cpus();
