@@ -100,6 +100,42 @@ static struct nightmare_tuners {
 	.io_is_busy = 0,
 };
 
+static inline cputime64_t get_cpu_idle_time_jiffy(unsigned int cpu,
+						  cputime64_t *wall)
+{
+	u64 idle_time;
+	u64 cur_wall_time;
+	u64 busy_time;
+
+	cur_wall_time = jiffies64_to_cputime64(get_jiffies_64());
+
+	busy_time  = kcpustat_cpu(cpu).cpustat[CPUTIME_USER];
+	busy_time += kcpustat_cpu(cpu).cpustat[CPUTIME_SYSTEM];
+	busy_time += kcpustat_cpu(cpu).cpustat[CPUTIME_IRQ];
+	busy_time += kcpustat_cpu(cpu).cpustat[CPUTIME_SOFTIRQ];
+	busy_time += kcpustat_cpu(cpu).cpustat[CPUTIME_STEAL];
+	busy_time += kcpustat_cpu(cpu).cpustat[CPUTIME_NICE];
+
+	idle_time = cur_wall_time - busy_time;
+	if (wall)
+		*wall = jiffies_to_usecs(cur_wall_time);
+
+	return jiffies_to_usecs(idle_time);
+}
+
+static inline cputime64_t get_cpu_idle_time(unsigned int cpu,
+					    cputime64_t *wall)
+{
+	u64 idle_time = get_cpu_idle_time_us(cpu, wall);
+
+	if (idle_time == -1ULL)
+		idle_time = get_cpu_idle_time_jiffy(cpu, wall);
+	else if (!nightmare_tuners_ins.io_is_busy)
+		idle_time += get_cpu_iowait_time_us(cpu, wall);
+
+	return idle_time;
+}
+
 /************************** sysfs interface ************************/
 
 /* cpufreq_nightmare Governor Tunables */
@@ -402,7 +438,7 @@ static ssize_t store_io_is_busy(struct kobject *a, struct attribute *b,
 			&per_cpu(od_nightmare_cpuinfo, cpu);
 
 		this_nightmare_cpuinfo->prev_cpu_idle = get_cpu_idle_time(cpu,
-			&this_nightmare_cpuinfo->prev_cpu_wall, nightmare_tuners_ins.io_is_busy);
+			&this_nightmare_cpuinfo->prev_cpu_wall);
 	}
 	put_online_cpus();
 	return count;
@@ -497,7 +533,6 @@ static void nightmare_check_cpu(struct cpufreq_nightmare_cpuinfo *this_nightmare
 	int freq_step_dec = nightmare_tuners_ins.freq_step_dec;
 	unsigned int max_load = 0;
 	unsigned int tmp_freq = 0;
-	int io_busy = nightmare_tuners_ins.io_is_busy;
 	unsigned int cpu = this_nightmare_cpuinfo->cpu;
 	unsigned int j;
 
@@ -516,7 +551,7 @@ static void nightmare_check_cpu(struct cpufreq_nightmare_cpuinfo *this_nightmare
 		if (!j_nightmare_cpuinfo->governor_enabled)
 			continue;
 
-		cur_idle_time = get_cpu_idle_time(j, &cur_wall_time, io_busy);
+		cur_idle_time = get_cpu_idle_time(j, &cur_wall_time);
 
 		wall_time = (unsigned int)
 			(cur_wall_time - j_nightmare_cpuinfo->prev_cpu_wall);
@@ -592,7 +627,6 @@ static int cpufreq_governor_nightmare(struct cpufreq_policy *policy,
 {
 	struct cpufreq_nightmare_cpuinfo *this_nightmare_cpuinfo;
 	unsigned int cpu = policy->cpu;
-	int io_busy = nightmare_tuners_ins.io_is_busy;
 	int rc, delay;
 
 	this_nightmare_cpuinfo = &per_cpu(od_nightmare_cpuinfo, cpu);
@@ -613,7 +647,7 @@ static int cpufreq_governor_nightmare(struct cpufreq_policy *policy,
 		this_nightmare_cpuinfo->cur_policy = policy;
 
 		this_nightmare_cpuinfo->prev_cpu_idle = get_cpu_idle_time(cpu,
-			&this_nightmare_cpuinfo->prev_cpu_wall, io_busy);
+			&this_nightmare_cpuinfo->prev_cpu_wall);
 
 		nightmare_enable++;
 		/*
