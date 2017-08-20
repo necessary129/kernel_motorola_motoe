@@ -32,6 +32,9 @@
 #ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
 #include <linux/input/doubletap2wake.h>
 #endif
+#ifdef CONFIG_POWERSUSPEND
+#include <linux/powersuspend.h>
+#endif
 
 #include "mdss_dsi.h"
 #include "mdss_fb.h"
@@ -797,6 +800,9 @@ static int mdss_dsi_panel_on(struct mdss_panel_data *pdata)
 #ifdef CONFIG_TOUCHSCREEN_PREVENT_SLEEP
 	dt2w_scr_suspended = false;
 #endif
+#ifdef CONFIG_POWERSUSPEND
+	set_power_suspend_state_panel_hook(POWER_SUSPEND_INACTIVE);
+#endif
 
 	lcd_notifier_call_chain(LCD_EVENT_ON_START);
 
@@ -943,6 +949,10 @@ disable_regs:
 
 	if (pdata->panel_info.dynamic_cabc_enabled)
 		pdata->panel_info.cabc_mode = CABC_OFF_MODE;
+
+#ifdef CONFIG_POWERSUSPEND
+	set_power_suspend_state_panel_hook(POWER_SUSPEND_ACTIVE);
+#endif
 
 	lcd_notifier_call_chain(LCD_EVENT_OFF_END);
 
