@@ -1643,6 +1643,13 @@ config ARM_CPU_TOPOLOGY
 	  affinity between processors which is then used to describe the cpu
 	  topology of an ARM System.
 
+config CLARITY_HOTPLUG
+	bool "Clarity Plug/Unplug Multicore cpu based cpu freq and load"
+	depends on SMP
+	default n
+	help
+	  A smart plug/unplug for multicore cpu based cpu freq and load.
+
 config SCHED_MC
 	bool "Multi-core scheduler support"
 	depends on ARM_CPU_TOPOLOGY
