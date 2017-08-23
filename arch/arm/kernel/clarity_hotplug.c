@@ -45,7 +45,6 @@ static bool suspended = false;
 struct clarity_cpu_data {
 	cputime64_t prev_cpu_idle;
 	cputime64_t prev_cpu_wall;
-	unsigned int avg_cpu_loads[];
 };
 static DEFINE_PER_CPU(struct clarity_cpu_data, clarity_data);
 
@@ -73,8 +72,7 @@ static struct clarity_param_struct {
 	.cycle_down = 1,
 };
 
-static unsigned int cycle = 0, delay0 = 0;
-static unsigned long delay_jif = 0;
+static unsigned int cycle = 0;
 static bool clarity_ready = false;
 
 static inline u64 get_cpu_idle_time_jiffy(unsigned int cpu, u64 *wall)
@@ -144,11 +142,9 @@ static void __ref clarity_work_fn(struct work_struct *work)
 {
 	struct cpufreq_policy *policy;
 	unsigned int cpu = 0, slow_cpu = 0;
-	unsigned int rate, cpu0_rate, slow_rate = UINT_MAX, fast_rate;
-	unsigned int up_rate, down_rate;
-	unsigned int max_freq = 0;
-	unsigned int max_loads = 0;
-	unsigned int avg_loads = 0;
+	unsigned int rate, cpu0_rate, slow_rate, fast_rate;
+	unsigned int up_rate, down_rate, max_freq = 0;
+	unsigned int fast_load = 0, slow_load = 0;
 	int nr_cpu_online;
 
 	if (suspended)
@@ -156,46 +152,36 @@ static void __ref clarity_work_fn(struct work_struct *work)
 
 	cycle++;
 
-	if (clarity_param.delay != delay0) {
-		delay0 = clarity_param.delay;
-		delay_jif = msecs_to_jiffies(delay0);
-	}
-
 	/* get maximum possible freq for cpu0 and
 	   calculate up/down limits */
 	policy = cpufreq_cpu_get(0);
 	max_freq = policy->max;
+	slow_rate = max_freq;
 
 	up_rate   = (clarity_param.cpufreq_up * max_freq) / 100;
 	down_rate = (clarity_param.cpufreq_down * max_freq) / 100;
 
 	/* get cpu loads from cpu 0 */
-	max_loads = get_cpu_loads(0);
+	fast_load = get_cpu_loads(0);
 
 	/* find current max and min cpu freq to estimate load */
 	get_online_cpus();
 	nr_cpu_online = num_online_cpus();
-	cpu0_rate = cpufreq_quick_get(cpu);
+	cpu0_rate = policy->cur;
 	fast_rate = cpu0_rate;
 	for_each_online_cpu(cpu) {
-		struct clarity_cpu_data *data;
-
-		data = &per_cpu(clarity_data, cpu);
 		if (cpu) {
-			rate = cpufreq_quick_get(cpu);
+			struct cpufreq_policy *pcpu;
+
+			pcpu = cpufreq_cpu_get(cpu);
+			rate = pcpu->cur;
 			if (rate <= slow_rate) {
 				slow_cpu = cpu;
 				slow_rate = rate;
-			} else if (rate > fast_rate)
+			} else if (rate > fast_rate) {
 				fast_rate = rate;
-
-			data->avg_cpu_loads[cpu] = 0;
-			data->avg_cpu_loads[cpu] = get_cpu_loads(cpu);
-			avg_loads = data->avg_cpu_loads[cpu];
-			avg_loads /= nr_cpu_online;
-		} else {
-			data->avg_cpu_loads[cpu] = 0;
-			avg_loads = data->avg_cpu_loads[cpu];
+			}
+			slow_load = get_cpu_loads(cpu);
 		}
 	}
 	put_online_cpus();
@@ -204,7 +190,7 @@ static void __ref clarity_work_fn(struct work_struct *work)
 
 	/* hotplug one core if all online cores are over up_rate limit */
 	if ((slow_rate > up_rate) &&
-		(max_loads > clarity_param.cpuload_up)) {
+		(fast_load > clarity_param.cpuload_up)) {
 		if ((nr_cpu_online < clarity_param.max_cpus) &&
 		    (cycle >= clarity_param.cycle_up)) {
 			cpu = cpumask_next_zero(0, cpu_online_mask);
@@ -213,7 +199,7 @@ static void __ref clarity_work_fn(struct work_struct *work)
 		}
 	/* unplug slowest core if all online cores are under down_rate limit */
 	} else if (slow_cpu && (fast_rate < down_rate) &&
-			(avg_loads < clarity_param.cpuload_down)) {
+			(slow_load < clarity_param.cpuload_down)) {
 		if ((nr_cpu_online > clarity_param.min_cpus) &&
 		    (cycle >= clarity_param.cycle_down)) {
  			cpu_down(slow_cpu);
@@ -221,7 +207,8 @@ static void __ref clarity_work_fn(struct work_struct *work)
 		}
 	} /* else do nothing */
 
-	queue_delayed_work(clarity_workq, &clarity_work, delay_jif);
+	queue_delayed_work(clarity_workq, &clarity_work,
+				msecs_to_jiffies(clarity_param.delay));
 }
 
 static void clarity_power_suspend(struct power_suspend *h)
@@ -260,9 +247,8 @@ static void __ref clarity_power_resume(struct power_suspend *h)
 			cpu_up(cpu);
 	}
 
-	/* resume main work thread */
-	queue_delayed_work(clarity_workq, &clarity_work,
-				msecs_to_jiffies(clarity_param.delay));
+	/* resume main work thread in 3 seconds */
+	queue_delayed_work(clarity_workq, &clarity_work, msecs_to_jiffies(3000));
 
 	pr_info(CLARITY_TAG"resumed with %d core online\n", num_online_cpus());
 }
