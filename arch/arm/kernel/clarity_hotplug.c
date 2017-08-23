@@ -38,7 +38,7 @@
 static struct delayed_work clarity_work;
 static struct workqueue_struct *clarity_workq;
 
-static DEFINE_MUTEX(clarity_mutex);
+static DEFINE_MUTEX(clarity_hp_mutex);
 
 static bool suspended = false;
 
@@ -59,6 +59,7 @@ static struct clarity_param_struct {
 	unsigned int cpuload_down;
 	unsigned int cycle_up;
 	unsigned int cycle_down;
+	struct mutex clarity_hp_mutexed;
 } clarity_param = {
 	.enabled = 0,
 	.delay = 100,
@@ -215,6 +216,8 @@ static void clarity_power_suspend(struct power_suspend *h)
 {
 	unsigned int cpu;
 
+	mutex_lock(&clarity_param.clarity_hp_mutexed);
+
 	suspended = true;
 
 	/* flush workqueue on suspend */
@@ -230,12 +233,16 @@ static void clarity_power_suspend(struct power_suspend *h)
 		cpu_down(cpu);
 	}
 
+	mutex_unlock(&clarity_param.clarity_hp_mutexed);
+
 	pr_info(CLARITY_TAG"suspended with %d core online\n", num_online_cpus());
 }
 
 static void __ref clarity_power_resume(struct power_suspend *h)
 {
 	unsigned int cpu;
+
+	mutex_lock(&clarity_param.clarity_hp_mutexed);
 
 	suspended = false;
 
@@ -249,6 +256,8 @@ static void __ref clarity_power_resume(struct power_suspend *h)
 
 	/* resume main work thread in 3 seconds */
 	queue_delayed_work(clarity_workq, &clarity_work, msecs_to_jiffies(3000));
+
+	mutex_unlock(&clarity_param.clarity_hp_mutexed);
 
 	pr_info(CLARITY_TAG"resumed with %d core online\n", num_online_cpus());
 }
@@ -269,7 +278,7 @@ static int clarity_start(void)
 		return ret;
 	}
 
-	mutex_lock(&clarity_mutex);
+	mutex_lock(&clarity_hp_mutex);
 
 	clarity_ready = true;
 
@@ -293,7 +302,9 @@ static int clarity_start(void)
 	INIT_DELAYED_WORK(&clarity_work, clarity_work_fn);
 	register_power_suspend(&clarity_power_suspend_handler);
 
-	mutex_unlock(&clarity_mutex);
+	mutex_init(&clarity_param.clarity_hp_mutexed);
+
+	mutex_unlock(&clarity_hp_mutex);
 
 	queue_delayed_work(clarity_workq, &clarity_work,
 				msecs_to_jiffies(CLARITY_STARTDELAY));
@@ -302,7 +313,7 @@ static int clarity_start(void)
 
 	return ret;
 error:
-	mutex_unlock(&clarity_mutex);
+	mutex_unlock(&clarity_hp_mutex);
 	clarity_param.enabled = 0;
 	clarity_ready = false;
 	return ret;
@@ -318,7 +329,7 @@ static int __ref clarity_stop(void)
 		return 0;
 	}
 
-	mutex_lock(&clarity_mutex);
+	mutex_lock(&clarity_hp_mutex);
 
 	clarity_ready = false;
 
@@ -327,9 +338,11 @@ static int __ref clarity_stop(void)
 
 	unregister_power_suspend(&clarity_power_suspend_handler);
 
+	mutex_destroy(&clarity_param.clarity_hp_mutexed);
+
 	destroy_workqueue(clarity_workq);
 
-	mutex_unlock(&clarity_mutex);
+	mutex_unlock(&clarity_hp_mutex);
 
 	for_each_present_cpu(cpu) {
 		if (num_online_cpus() >= clarity_param.max_cpus)
