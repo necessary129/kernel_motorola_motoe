@@ -48,6 +48,8 @@ struct clarity_cpu_data {
 };
 static DEFINE_PER_CPU(struct clarity_cpu_data, clarity_data);
 
+static bool clarity_ready = false;
+
 static struct clarity_param_struct {
 	int enabled;
 	unsigned int delay;
@@ -57,8 +59,7 @@ static struct clarity_param_struct {
 	unsigned int cpuload_up;
 	unsigned int cpufreq_down;
 	unsigned int cpuload_down;
-	unsigned int cycle_up;
-	unsigned int cycle_down;
+	int io_is_busy;
 	struct mutex clarity_hp_mutexed;
 } clarity_param = {
 	.enabled = 0,
@@ -69,14 +70,11 @@ static struct clarity_param_struct {
 	.cpufreq_down = 70,
 	.cpuload_up = 80,
 	.cpuload_down = 50,
-	.cycle_up = 1,
-	.cycle_down = 1,
+	.io_is_busy = 0,
 };
 
-static unsigned int cycle = 0;
-static bool clarity_ready = false;
-
-static inline u64 get_cpu_idle_time_jiffy(unsigned int cpu, u64 *wall)
+static inline cputime64_t get_cpu_idle_time_jiffy(unsigned int cpu,
+						  cputime64_t *wall)
 {
 	u64 idle_time;
 	u64 cur_wall_time;
@@ -98,13 +96,14 @@ static inline u64 get_cpu_idle_time_jiffy(unsigned int cpu, u64 *wall)
 	return jiffies_to_usecs(idle_time);
 }
 
-static inline cputime64_t get_cpu_idle_time(unsigned int cpu, cputime64_t *wall)
+static inline cputime64_t get_cpu_idle_time(unsigned int cpu,
+					    cputime64_t *wall)
 {
-	u64 idle_time = get_cpu_idle_time_us(cpu, NULL);
+	u64 idle_time = get_cpu_idle_time_us(cpu, wall);
 
 	if (idle_time == -1ULL)
-		return get_cpu_idle_time_jiffy(cpu, wall);
-	else
+		idle_time = get_cpu_idle_time_jiffy(cpu, wall);
+	else if (!clarity_param.io_is_busy)
 		idle_time += get_cpu_iowait_time_us(cpu, wall);
 
 	return idle_time;
@@ -113,13 +112,12 @@ static inline cputime64_t get_cpu_idle_time(unsigned int cpu, cputime64_t *wall)
 static int get_cpu_loads(unsigned int cpu)
 {
 	struct clarity_cpu_data *data = &per_cpu(clarity_data, cpu);
-	struct cpufreq_policy *policy;
+	struct cpufreq_policy policy;
 	u64 cur_wall_time, cur_idle_time;
 	unsigned int idle_time, wall_time;
-	unsigned int load = 0;
-	unsigned int max_load = 0;
+	unsigned int load = 0, max_load = 0;
 
-	policy = cpufreq_cpu_get(cpu);
+	cpufreq_get_policy(&policy, cpu);
 
 	cur_idle_time = get_cpu_idle_time(cpu, &cur_wall_time);
 
@@ -134,14 +132,14 @@ static int get_cpu_loads(unsigned int cpu)
 
 	load = 100 * (wall_time - idle_time) / wall_time;
 
-	max_load = (load * policy->cur) / policy->max;
+	max_load = (load * policy.cur) / policy.max;
 
 	return max_load;
 }
 
 static void __ref clarity_work_fn(struct work_struct *work)
 {
-	struct cpufreq_policy *policy;
+	struct cpufreq_policy policy;
 	unsigned int cpu = 0, slow_cpu = 0;
 	unsigned int rate, cpu0_rate, slow_rate, fast_rate;
 	unsigned int up_rate, down_rate, max_freq = 0;
@@ -151,15 +149,13 @@ static void __ref clarity_work_fn(struct work_struct *work)
 	if (suspended)
 		return;
 
-	cycle++;
+	/* get policy at cpu 0 */
+	cpufreq_get_policy(&policy, 0);
 
-	/* get maximum possible freq for cpu0 and
-	   calculate up/down limits */
-	policy = cpufreq_cpu_get(0);
-	max_freq = policy->max;
+	max_freq = policy.max;
 	slow_rate = max_freq;
 
-	up_rate   = (clarity_param.cpufreq_up * max_freq) / 100;
+	up_rate = (clarity_param.cpufreq_up * max_freq) / 100;
 	down_rate = (clarity_param.cpufreq_down * max_freq) / 100;
 
 	/* get cpu loads from cpu 0 */
@@ -168,14 +164,14 @@ static void __ref clarity_work_fn(struct work_struct *work)
 	/* find current max and min cpu freq to estimate load */
 	get_online_cpus();
 	nr_cpu_online = num_online_cpus();
-	cpu0_rate = policy->cur;
+	cpu0_rate = policy.cur;
 	fast_rate = cpu0_rate;
 	for_each_online_cpu(cpu) {
 		if (cpu) {
-			struct cpufreq_policy *pcpu;
+			struct cpufreq_policy pcpu;
 
-			pcpu = cpufreq_cpu_get(cpu);
-			rate = pcpu->cur;
+			cpufreq_get_policy(&pcpu, cpu);
+			rate = pcpu.cur;
 			if (rate <= slow_rate) {
 				slow_cpu = cpu;
 				slow_rate = rate;
@@ -192,19 +188,15 @@ static void __ref clarity_work_fn(struct work_struct *work)
 	/* hotplug one core if all online cores are over up_rate limit */
 	if ((slow_rate > up_rate) &&
 		(fast_load > clarity_param.cpuload_up)) {
-		if ((nr_cpu_online < clarity_param.max_cpus) &&
-		    (cycle >= clarity_param.cycle_up)) {
+		if (nr_cpu_online < clarity_param.max_cpus) {
 			cpu = cpumask_next_zero(0, cpu_online_mask);
 			cpu_up(cpu);
-			cycle = 0;
 		}
 	/* unplug slowest core if all online cores are under down_rate limit */
 	} else if (slow_cpu && (fast_rate < down_rate) &&
 			(slow_load < clarity_param.cpuload_down)) {
-		if ((nr_cpu_online > clarity_param.min_cpus) &&
-		    (cycle >= clarity_param.cycle_down)) {
+		if (nr_cpu_online > clarity_param.min_cpus) {
  			cpu_down(slow_cpu);
-			cycle = 0;
 		}
 	} /* else do nothing */
 
@@ -291,7 +283,7 @@ static int clarity_start(void)
 
 	/* record previous cpu idle */
 	get_online_cpus();
-	for_each_possible_cpu(cpu) {
+	for_each_online_cpu(cpu) {
 		struct clarity_cpu_data *data;
 
 		data = &per_cpu(clarity_data, cpu);
@@ -370,8 +362,7 @@ show_one(cpufreq_up, cpufreq_up);
 show_one(cpufreq_down, cpufreq_down);
 show_one(cpuload_up, cpuload_up);
 show_one(cpuload_down, cpuload_down);
-show_one(cycle_up, cycle_up);
-show_one(cycle_down, cycle_down);
+show_one(io_is_busy, io_is_busy);
 
 static ssize_t store_enabled(struct kobject *a, struct attribute *b,
 			const char *buf, size_t count)
@@ -498,32 +489,27 @@ static ssize_t store_cpuload_down(struct kobject *a, struct attribute *b,
 	return count;
 }
 
-static ssize_t store_cycle_up(struct kobject *a, struct attribute *b,
+static ssize_t store_io_is_busy(struct kobject *a, struct attribute *b,
 			const char *buf, size_t count)
 {
-	unsigned int input;
+	unsigned int cpu, input;
 	int ret;
 
 	ret = sscanf(buf, "%u", &input);
 	if (ret != 1)
 		return -EINVAL;
 
-	clarity_param.cycle_up = input;
+	clarity_param.io_is_busy = input;
 
-	return count;
-}
+	/* record previous cpu idle */
+	get_online_cpus();
+	for_each_online_cpu(cpu) {
+		struct clarity_cpu_data *data;
 
-static ssize_t store_cycle_down(struct kobject *a, struct attribute *b,
-			const char *buf, size_t count)
-{
-	unsigned int input;
-	int ret;
-
-	ret = sscanf(buf, "%u", &input);
-	if (ret != 1)
-		return -EINVAL;
-
-	clarity_param.cycle_down = input;
+		data = &per_cpu(clarity_data, cpu);
+		data->prev_cpu_idle = get_cpu_idle_time(cpu, &data->prev_cpu_wall);
+	}
+	put_online_cpus();
 
 	return count;
 }
@@ -536,8 +522,7 @@ define_one_global_rw(cpufreq_up);
 define_one_global_rw(cpufreq_down);
 define_one_global_rw(cpuload_up);
 define_one_global_rw(cpuload_down);
-define_one_global_rw(cycle_up);
-define_one_global_rw(cycle_down);
+define_one_global_rw(io_is_busy);
 
 static struct attribute *clarity_attributes[] = {
 	&enabled.attr,
@@ -548,8 +533,7 @@ static struct attribute *clarity_attributes[] = {
 	&cpufreq_down.attr,
 	&cpuload_up.attr,
 	&cpuload_down.attr,
-	&cycle_up.attr,
-	&cycle_down.attr,
+	&io_is_busy.attr,
 	NULL
 };
 
