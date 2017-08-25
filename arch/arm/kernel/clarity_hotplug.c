@@ -38,13 +38,14 @@
 static struct delayed_work clarity_work;
 static struct workqueue_struct *clarity_workq;
 
-static DEFINE_MUTEX(clarity_hp_mutex);
+static DEFINE_MUTEX(mutex);
 
 static bool suspended = false;
 
 struct clarity_cpu_data {
 	cputime64_t prev_cpu_idle;
 	cputime64_t prev_cpu_wall;
+	cputime64_t prev_cpu_iowait;
 };
 static DEFINE_PER_CPU(struct clarity_cpu_data, clarity_data);
 
@@ -60,7 +61,7 @@ static struct clarity_param_struct {
 	unsigned int cpufreq_down;
 	unsigned int cpuload_down;
 	int io_is_busy;
-	struct mutex clarity_hp_mutexed;
+	struct mutex state_mutex;
 } clarity_param = {
 	.enabled = 0,
 	.delay = 100,
@@ -73,8 +74,7 @@ static struct clarity_param_struct {
 	.io_is_busy = 0,
 };
 
-static inline cputime64_t get_cpu_idle_time_jiffy(unsigned int cpu,
-						  cputime64_t *wall)
+static inline u64 get_cpu_idle_time_jiffy(unsigned int cpu, u64 *wall)
 {
 	u64 idle_time;
 	u64 cur_wall_time;
@@ -96,30 +96,38 @@ static inline cputime64_t get_cpu_idle_time_jiffy(unsigned int cpu,
 	return jiffies_to_usecs(idle_time);
 }
 
-static inline cputime64_t get_cpu_idle_time(unsigned int cpu,
-					    cputime64_t *wall)
+static inline cputime64_t get_cpu_idle_time(unsigned int cpu, cputime64_t *wall)
 {
-	u64 idle_time = get_cpu_idle_time_us(cpu, wall);
+	u64 idle_time = get_cpu_idle_time_us(cpu, NULL);
 
 	if (idle_time == -1ULL)
-		idle_time = get_cpu_idle_time_jiffy(cpu, wall);
-	else if (!clarity_param.io_is_busy)
+		return get_cpu_idle_time_jiffy(cpu, wall);
+	else
 		idle_time += get_cpu_iowait_time_us(cpu, wall);
 
 	return idle_time;
 }
 
-static int get_cpu_loads(unsigned int cpu)
+static inline cputime64_t get_cpu_iowait_time(unsigned int cpu, cputime64_t *wall)
+{
+	u64 iowait_time = get_cpu_iowait_time_us(cpu, wall);
+
+	if (iowait_time == -1ULL)
+		return 0;
+
+	return iowait_time;
+}
+
+static int get_cpu_loads(unsigned cur_freq,
+		unsigned int cur_max_freq, unsigned int cpu)
 {
 	struct clarity_cpu_data *data = &per_cpu(clarity_data, cpu);
-	struct cpufreq_policy policy;
-	u64 cur_wall_time, cur_idle_time;
-	unsigned int idle_time, wall_time;
+	cputime64_t cur_wall_time, cur_idle_time, cur_iowait_time;
+	unsigned int idle_time, wall_time, iowait_time;
 	unsigned int load = 0, max_load = 0;
 
-	cpufreq_get_policy(&policy, cpu);
-
 	cur_idle_time = get_cpu_idle_time(cpu, &cur_wall_time);
+	cur_iowait_time = get_cpu_iowait_time(cpu, &cur_wall_time);
 
 	wall_time = (unsigned int) (cur_wall_time - data->prev_cpu_wall);
 	data->prev_cpu_wall = cur_wall_time;
@@ -127,12 +135,18 @@ static int get_cpu_loads(unsigned int cpu)
 	idle_time = (unsigned int) (cur_idle_time - data->prev_cpu_idle);
 	data->prev_cpu_idle = cur_idle_time;
 
+	iowait_time = (unsigned int) (cur_iowait_time - data->prev_cpu_iowait);
+	data->prev_cpu_iowait = cur_iowait_time;
+
+	if (clarity_param.io_is_busy && idle_time >= iowait_time)
+		idle_time -= iowait_time;
+
 	if (unlikely(!wall_time || wall_time < idle_time))
 		return 0;
 
 	load = 100 * (wall_time - idle_time) / wall_time;
 
-	max_load = (load * policy.cur) / policy.max;
+	max_load = (load * cur_freq) / cur_max_freq;
 
 	return max_load;
 }
@@ -152,14 +166,14 @@ static void __ref clarity_work_fn(struct work_struct *work)
 	/* get policy at cpu 0 */
 	cpufreq_get_policy(&policy, 0);
 
-	max_freq = policy.max;
+	max_freq = policy.cpuinfo.max_freq;
 	slow_rate = max_freq;
 
 	up_rate = (clarity_param.cpufreq_up * max_freq) / 100;
 	down_rate = (clarity_param.cpufreq_down * max_freq) / 100;
 
 	/* get cpu loads from cpu 0 */
-	fast_load = get_cpu_loads(0);
+	fast_load = get_cpu_loads(policy.cur, max_freq, 0);
 
 	/* find current max and min cpu freq to estimate load */
 	get_online_cpus();
@@ -178,7 +192,8 @@ static void __ref clarity_work_fn(struct work_struct *work)
 			} else if (rate > fast_rate) {
 				fast_rate = rate;
 			}
-			slow_load = get_cpu_loads(cpu);
+			slow_load = get_cpu_loads(rate,
+					pcpu.cpuinfo.max_freq, cpu);
 		}
 	}
 	put_online_cpus();
@@ -208,7 +223,7 @@ static void clarity_power_suspend(struct power_suspend *h)
 {
 	unsigned int cpu;
 
-	mutex_lock(&clarity_param.clarity_hp_mutexed);
+	mutex_lock(&clarity_param.state_mutex);
 
 	suspended = true;
 
@@ -220,12 +235,11 @@ static void clarity_power_suspend(struct power_suspend *h)
 
 	/* unplug online cpu cores */
 	for_each_online_cpu(cpu) {
-		if (cpu == 0)
-			continue;
-		cpu_down(cpu);
+		if (cpu)
+			cpu_down(cpu);
 	}
 
-	mutex_unlock(&clarity_param.clarity_hp_mutexed);
+	mutex_unlock(&clarity_param.state_mutex);
 
 	pr_info(CLARITY_TAG"suspended with %d core online\n", num_online_cpus());
 }
@@ -234,7 +248,7 @@ static void __ref clarity_power_resume(struct power_suspend *h)
 {
 	unsigned int cpu;
 
-	mutex_lock(&clarity_param.clarity_hp_mutexed);
+	mutex_lock(&clarity_param.state_mutex);
 
 	suspended = false;
 
@@ -249,7 +263,7 @@ static void __ref clarity_power_resume(struct power_suspend *h)
 	/* resume main work thread in 3 seconds */
 	queue_delayed_work(clarity_workq, &clarity_work, msecs_to_jiffies(3000));
 
-	mutex_unlock(&clarity_param.clarity_hp_mutexed);
+	mutex_unlock(&clarity_param.state_mutex);
 
 	pr_info(CLARITY_TAG"resumed with %d core online\n", num_online_cpus());
 }
@@ -270,7 +284,7 @@ static int clarity_start(void)
 		return ret;
 	}
 
-	mutex_lock(&clarity_hp_mutex);
+	mutex_lock(&mutex);
 
 	clarity_ready = true;
 
@@ -282,21 +296,20 @@ static int clarity_start(void)
 	}
 
 	/* record previous cpu idle */
-	get_online_cpus();
-	for_each_online_cpu(cpu) {
+	for_each_possible_cpu(cpu) {
 		struct clarity_cpu_data *data;
 
 		data = &per_cpu(clarity_data, cpu);
-		data->prev_cpu_idle = get_cpu_idle_time(cpu, &data->prev_cpu_wall);
+		data->prev_cpu_idle = get_cpu_idle_time(cpu,
+						&data->prev_cpu_wall);
 	}
-	put_online_cpus();
 
 	INIT_DELAYED_WORK(&clarity_work, clarity_work_fn);
 	register_power_suspend(&clarity_power_suspend_handler);
 
-	mutex_init(&clarity_param.clarity_hp_mutexed);
+	mutex_init(&clarity_param.state_mutex);
 
-	mutex_unlock(&clarity_hp_mutex);
+	mutex_unlock(&mutex);
 
 	queue_delayed_work(clarity_workq, &clarity_work,
 				msecs_to_jiffies(CLARITY_STARTDELAY));
@@ -305,7 +318,7 @@ static int clarity_start(void)
 
 	return ret;
 error:
-	mutex_unlock(&clarity_hp_mutex);
+	mutex_unlock(&mutex);
 	clarity_param.enabled = 0;
 	clarity_ready = false;
 	return ret;
@@ -321,7 +334,7 @@ static int __ref clarity_stop(void)
 		return 0;
 	}
 
-	mutex_lock(&clarity_hp_mutex);
+	mutex_lock(&mutex);
 
 	clarity_ready = false;
 
@@ -330,11 +343,11 @@ static int __ref clarity_stop(void)
 
 	unregister_power_suspend(&clarity_power_suspend_handler);
 
-	mutex_destroy(&clarity_param.clarity_hp_mutexed);
+	mutex_destroy(&clarity_param.state_mutex);
 
 	destroy_workqueue(clarity_workq);
 
-	mutex_unlock(&clarity_hp_mutex);
+	mutex_unlock(&mutex);
 
 	for_each_present_cpu(cpu) {
 		if (num_online_cpus() >= clarity_param.max_cpus)
@@ -502,14 +515,13 @@ static ssize_t store_io_is_busy(struct kobject *a, struct attribute *b,
 	clarity_param.io_is_busy = input;
 
 	/* record previous cpu idle */
-	get_online_cpus();
-	for_each_online_cpu(cpu) {
+	for_each_possible_cpu(cpu) {
 		struct clarity_cpu_data *data;
 
 		data = &per_cpu(clarity_data, cpu);
-		data->prev_cpu_idle = get_cpu_idle_time(cpu, &data->prev_cpu_wall);
+		data->prev_cpu_idle = get_cpu_idle_time(cpu,
+						&data->prev_cpu_wall);
 	}
-	put_online_cpus();
 
 	return count;
 }
