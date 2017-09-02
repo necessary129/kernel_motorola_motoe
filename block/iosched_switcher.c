@@ -48,10 +48,17 @@ static void change_elevator(struct req_queue_data *r, bool use_noop)
 	r->using_noop = use_noop;
 
 	if (use_noop) {
+		/* copy previuos iosched */
 		strcpy(r->prev_e, q->elevator->type->elevator_name);
-		elevator_change(q, NOOP_IOSCHED);
+		/* skip if equal with previous iosched */
+		if (strcmp(r->prev_e, NOOP_IOSCHED) != 0) {
+			elevator_change(q, NOOP_IOSCHED);
+		}
 	} else {
-		elevator_change(q, r->prev_e);
+		/* skip if equal with previous iosched */
+		if (strcmp(r->prev_e, NOOP_IOSCHED) != 0) {
+			elevator_change(q, r->prev_e);
+		}
 	}
 }
 
