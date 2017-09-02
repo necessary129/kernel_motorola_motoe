@@ -28,6 +28,8 @@ struct req_queue_data {
 	bool using_noop;
 };
 
+static bool resumed = false;
+
 static struct delayed_work restore_prev;
 static DEFINE_SPINLOCK(init_lock);
 static struct req_queue_data req_queues = {
@@ -66,23 +68,32 @@ static void restore_prev_fn(struct work_struct *work)
 
 static void is_power_suspend(struct power_suspend *h)
 {
+	if (resumed) {
+		cancel_delayed_work_sync(&restore_prev);
+	}
+
+	resumed = false;
+
 	/*
 	 * Switch to noop when the screen turns off. Purposely block
 	 * the fb notifier chain call in case weird things can happen
 	 * when switching elevators while the screen is off.
 	 */
-	cancel_delayed_work_sync(&restore_prev);
 	change_all_elevators(&req_queues.list, true);
 }
 
 static void is_power_resume(struct power_suspend *h)
 {
-	/*
-	 * Switch back from noop to the original iosched after a delay
-	 * when the screen is turned on.
-	 */
-	schedule_delayed_work(&restore_prev,
-			msecs_to_jiffies(RESTORE_DELAY_MS));
+	if (!resumed) {
+		resumed = true;
+
+		/*
+		 * Switch back from noop to the original iosched after a delay
+		 * when the screen is turned on.
+		 */
+		schedule_delayed_work(&restore_prev,
+				msecs_to_jiffies(RESTORE_DELAY_MS));
+	}
 }
 
 static struct power_suspend is_power_suspend_handler = {
