@@ -135,7 +135,7 @@ int init_iosched_switcher(struct request_queue *q)
 	return 0;
 }
 
-static int iosched_switcher_core_init(void)
+static int __init iosched_switcher_core_init(void)
 {
 	is_wq = alloc_workqueue("io_switcher", WQ_HIGHPRI, 0);
 	if (!is_wq) {
