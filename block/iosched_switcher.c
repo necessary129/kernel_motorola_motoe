@@ -19,8 +19,7 @@
 #include <linux/powersuspend.h>
 
 #define NOOP_IOSCHED "noop"
-#define RESTORE_DELAY_MS (5000)
-#define SUSPEND_DELAY_MS (5000)
+#define DELAY_MS (10000)
 
 struct req_queue_data {
 	struct list_head list;
@@ -94,7 +93,7 @@ static void is_power_suspend(struct power_suspend *h)
 	resumed = false;
 
 	queue_delayed_work(is_wq, &suspend_work,
-			msecs_to_jiffies(SUSPEND_DELAY_MS));
+			msecs_to_jiffies(DELAY_MS));
 }
 
 static void is_power_resume(struct power_suspend *h)
@@ -109,7 +108,7 @@ static void is_power_resume(struct power_suspend *h)
 		 * when the screen is turned on.
 		 */
 		queue_delayed_work(is_wq, &restore_prev,
-				msecs_to_jiffies(RESTORE_DELAY_MS));
+				msecs_to_jiffies(DELAY_MS));
 	}
 }
 
