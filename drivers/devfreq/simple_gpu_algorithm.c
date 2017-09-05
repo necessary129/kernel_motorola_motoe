@@ -1,7 +1,13 @@
 /*
  * Author: Paul Reioux aka Faux123 <reioux@gmail.com>
  *
- * Copyright 2011~2014 Paul Reioux
+ * Copyright (C) 2011~2014  Paul Reioux <reioux@gmail.com>
+ *
+ * Copyright (C) 2017  	    Ryan Andri <github.com/ryan-andri>.
+ *			    Optimized :
+ *			    - Add missing nest which lead to
+ *			      wrong return values.
+ *			    - Keep style TrueZone.
  *
  * This software is licensed under the terms of the GNU General Public
  * License version 2, as published by the Free Software Foundation, and
@@ -15,7 +21,11 @@
  */
 #include <linux/module.h>
 #include <linux/devfreq.h>
+#include <linux/io.h>
+#include <linux/spinlock.h>
 #include <linux/msm_adreno_devfreq.h>
+
+static DEFINE_SPINLOCK(simple_gpu_lock);
 
 static int default_laziness = 4;
 module_param_named(simple_laziness, default_laziness, int, 0664);
@@ -28,10 +38,10 @@ module_param_named(simple_gpu_activate, simple_gpu_active, int, 0664);
 
 static int laziness;
 
-int simple_gpu_algorithm(int level,
+static int simple_gpu_algorithm_func(int level,
 			struct devfreq_msm_adreno_tz_data *priv)
 {
-	int val;
+	int val = 0;
 
 	/* it's currently busy */
 	if (priv->bin.busy_time > ramp_up_threshold) {
@@ -59,6 +69,20 @@ int simple_gpu_algorithm(int level,
 	}
 
 	return val;
+}
+
+int simple_gpu_algorithm(int level,
+			struct devfreq_msm_adreno_tz_data *priv)
+{
+	int ret;
+
+	spin_lock(&simple_gpu_lock);
+	/* sync memory before sending the commands */
+	__iowmb();
+	ret = simple_gpu_algorithm_func(level, priv);
+	spin_unlock(&simple_gpu_lock);
+
+	return ret;
 }
 EXPORT_SYMBOL(simple_gpu_algorithm);
 
