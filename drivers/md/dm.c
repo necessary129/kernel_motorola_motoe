@@ -19,7 +19,9 @@
 #include <linux/idr.h>
 #include <linux/hdreg.h>
 #include <linux/delay.h>
+#ifdef CONFIG_IOSCHED_SWITCHER
 #include <linux/iosched_switcher.h>
+#endif
 
 #include <trace/events/block.h>
 
@@ -1922,8 +1924,9 @@ static struct mapped_device *alloc_dev(int minor)
 	spin_unlock(&_minor_lock);
 
 	BUG_ON(old_md != MINOR_ALLOCED);
-
+#ifdef CONFIG_IOSCHED_SWITCHER
 	init_iosched_switcher(md->queue);
+#endif
 
 	return md;
 

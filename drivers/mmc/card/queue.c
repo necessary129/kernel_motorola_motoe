@@ -16,7 +16,9 @@
 #include <linux/kthread.h>
 #include <linux/scatterlist.h>
 #include <linux/bitops.h>
+#ifdef CONFIG_IOSCHED_SWITCHER
 #include <linux/iosched_switcher.h>
+#endif
 
 #include <linux/mmc/card.h>
 #include <linux/mmc/host.h>
@@ -406,8 +408,9 @@ success:
 		ret = PTR_ERR(mq->thread);
 		goto free_bounce_sg;
 	}
-
+#ifdef CONFIG_IOSCHED_SWITCHER
 	init_iosched_switcher(mq->queue);
+#endif
 
 	return 0;
  free_bounce_sg:
