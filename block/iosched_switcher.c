@@ -18,7 +18,7 @@
 #include <linux/elevator.h>
 #include <linux/powersuspend.h>
 
-#define NOOP_IOSCHED "noop"
+#define IOSCHED "fifo"
 #define DELAY_MS (10000)
 
 struct req_queue_data {
@@ -50,12 +50,12 @@ static void change_elevator(struct req_queue_data *r, bool use_noop)
 		/* copy previuos iosched */
 		strcpy(r->prev_e, q->elevator->type->elevator_name);
 		/* skip if equal with previous iosched */
-		if (strcmp(r->prev_e, NOOP_IOSCHED) != 0) {
-			elevator_change(q, NOOP_IOSCHED);
+		if (strcmp(r->prev_e, IOSCHED) != 0) {
+			elevator_change(q, IOSCHED);
 		}
 	} else {
 		/* skip if equal with previous iosched */
-		if (strcmp(r->prev_e, NOOP_IOSCHED) != 0) {
+		if (strcmp(r->prev_e, IOSCHED) != 0) {
 			elevator_change(q, r->prev_e);
 		}
 	}
