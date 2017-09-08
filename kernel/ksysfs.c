@@ -189,11 +189,12 @@ static struct attribute_group kernel_attr_group = {
 	.attrs = kernel_attrs,
 };
 
-static unsigned int Lgentle_fair_sleepers = 1;
-static unsigned int Larch_power = 1;
-
-extern void relay_gfs(unsigned int gfs);
-extern void relay_ap(unsigned int ap);
+/*
+ * Default values for Gentle fair sleeper
+ * and Arch Power tunable.
+ */
+int Lgentle_fair_sleepers = 1;
+int Larch_power = 0;
 
 static ssize_t gentle_fair_sleepers_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
@@ -209,7 +210,7 @@ static ssize_t gentle_fair_sleepers_store(struct kobject *kobj, struct kobj_attr
 		input = 0;
 	
 	Lgentle_fair_sleepers = input;
-	relay_gfs(Lgentle_fair_sleepers);
+
 	return count;
 }
 KERNEL_ATTR_RW(gentle_fair_sleepers);
@@ -228,7 +229,7 @@ static ssize_t arch_power_store(struct kobject *kobj, struct kobj_attribute *att
 		input = 0;
 	
 	Larch_power = input;
-	relay_ap(Larch_power);
+
 	return count;
 }
 KERNEL_ATTR_RW(arch_power);

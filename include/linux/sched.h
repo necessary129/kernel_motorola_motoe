@@ -2198,6 +2198,9 @@ static inline bool tsk_is_pi_blocked(struct task_struct *tsk)
 }
 #endif
 
+extern int Lgentle_fair_sleepers;
+extern int Larch_power;
+
 extern bool yield_to(struct task_struct *p, bool preempt);
 extern void set_user_nice(struct task_struct *p, long nice);
 extern int task_prio(const struct task_struct *p);
