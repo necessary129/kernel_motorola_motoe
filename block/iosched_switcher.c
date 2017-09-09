@@ -56,8 +56,9 @@ static void change_elevator(struct req_queue_data *r, bool use_noop)
 			elevator_change(q, IOSCHED);
 		}
 	} else {
-		/* skip if equal with previous iosched */
-		if (strcmp(r->prev_e, IOSCHED) != 0) {
+		/* skip if NULL and not equal with fifo iosched */
+		if ((r->prev_e != NULL) &&
+			(strcmp(q->elevator->type->elevator_name, IOSCHED) == 0)) {
 			elevator_change(q, r->prev_e);
 		}
 	}
