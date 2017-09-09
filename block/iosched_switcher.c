@@ -28,7 +28,9 @@ struct req_queue_data {
 	bool using_noop;
 };
 
+/* flags for state suspend/resume */
 static bool resumed = false;
+static bool suspended = false;
 
 static struct delayed_work restore_prev, suspend_work;
 static struct workqueue_struct *is_wq;
@@ -94,22 +96,26 @@ static void is_power_suspend(struct power_suspend *h)
 
 	queue_delayed_work(is_wq, &suspend_work,
 			msecs_to_jiffies(DELAY_MS));
+
+	suspended = true;
 }
 
 static void is_power_resume(struct power_suspend *h)
 {
-	if (!resumed) {
-		resumed = true;
-
+	if (suspended) {
 		cancel_delayed_work_sync(&suspend_work);
-
-		/*
-		 * Switch back from noop to the original iosched after a delay
-		 * when the screen is turned on.
-		 */
-		queue_delayed_work(is_wq, &restore_prev,
-				msecs_to_jiffies(DELAY_MS));
 	}
+
+	suspended = false;
+
+	/*
+	 * Switch back from noop to the original iosched after a delay
+	 * when the screen is turned on.
+	 */
+	queue_delayed_work(is_wq, &restore_prev,
+			msecs_to_jiffies(DELAY_MS));
+
+	resumed = true;
 }
 
 static struct power_suspend is_power_suspend_handler = {
