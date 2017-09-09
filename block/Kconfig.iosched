@@ -127,15 +127,15 @@ config IOSCHED_VR
 	    applied reversing the head direction.
 
 config IOSCHED_SWITCHER
-	bool "Use Fifo while the screen is off"
-	depends on IOSCHED_FIFO
+	bool "Use Fifo/Noop while the screen is off"
+	depends on IOSCHED_NOOP || IOSCHED_FIFO
 	---help---
 	  This enables a driver that switches the I/O scheduler for a single
-	  block device to Fifo when the screen turns off, and back to its
+	  block device to Fifo/Noop when the screen turns off, and back to its
 	  original I/O scheduler after a delay when the screen is turned back
 	  on. It requires being manually initialized from a different driver
 	  in order to grab the request_queue pointer that should have its I/O
-	  scheduler switched to Fifo when the screen turns off.
+	  scheduler switched to Fifo/Noop when the screen turns off.
 
 choice
 	prompt "Default I/O scheduler"
