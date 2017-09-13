@@ -171,7 +171,7 @@ int init_iosched_switcher(struct request_queue *q)
 
 static int __init iosched_switcher_core_init(void)
 {
-	is_wq = alloc_workqueue("io_switcher", WQ_HIGHPRI, 0);
+	is_wq = alloc_workqueue("io_switcher", WQ_HIGHPRI | WQ_MEM_RECLAIM, 0);
 	if (!is_wq) {
 		pr_info("%s: Failed to allocate workqueue\n", __func__);
 		return -ENOMEM;
