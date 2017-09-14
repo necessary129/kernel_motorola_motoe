@@ -66,9 +66,12 @@ static void change_elevator(struct req_queue_data *r, bool is_suspend)
 	if (is_suspend) {
 		/* copy previuos iosched */
 		strcpy(r->prev_e, q->elevator->type->elevator_name);
+
 		/* skip if equal with previous iosched */
-		if (strcmp(r->prev_e, IOSCHED) != 0) {
-			elevator_change(q, IOSCHED);
+		if (r->prev_e != NULL) {
+			if (strcmp(r->prev_e, IOSCHED) != 0) {
+				elevator_change(q, IOSCHED);
+			}
 		}
 	} else {
 		/* skip if NULL and not equal with fifo/noop iosched */
