@@ -25,5 +25,5 @@ fi
 cd /home/ryanandri/android/android_kernel_motoe/clarity-$DK-condor
 
 DATE=`date +%d-%m-%Y`;
-zip -r /home/ryanandri/android/release/Clarity-$DK-$DATE.zip *
+zip -r /home/ryanandri/android/release/Clarity-$DK-$DATE-lite.zip *
 
