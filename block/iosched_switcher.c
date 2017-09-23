@@ -2,7 +2,7 @@
  * I/O Scheduler Swicher.
  *
  * Switches the I/O scheduler for a single block
- * device to Fifo/Noop when the screen turns off,
+ * device to Noop when the screen turns off,
  * and back to its original I/O scheduler after
  * a delay when the screen is turned back on.
  *
@@ -27,11 +27,7 @@
 #include <linux/elevator.h>
 #include <linux/powersuspend.h>
 
-#ifdef CONFIG_IOSCHED_FIFO
-#define IOSCHED "fifo"
-#else
 #define IOSCHED "noop"
-#endif
 #define DELAY_MS (10000)
 
 struct req_queue_data {
@@ -41,15 +37,12 @@ struct req_queue_data {
 	bool is_state;
 };
 
-/* flags for state suspend/resume */
+/* flags for state resume */
 static bool resumed = false;
-static bool suspended = false;
 
 static DEFINE_SPINLOCK(init_lock);
 
-static struct delayed_work resume_work;
-static struct delayed_work suspend_work;
-static struct workqueue_struct *is_wq;
+static struct delayed_work is_resume_work;
 static struct req_queue_data req_queues = {
 	.list = LIST_HEAD_INIT(req_queues.list),
 };
@@ -74,7 +67,7 @@ static void change_elevator(struct req_queue_data *r, bool is_suspend)
 			}
 		}
 	} else {
-		/* skip if NULL and not equal with fifo/noop iosched */
+		/* skip if NULL and not equal with noop iosched */
 		if (r->prev_e != NULL) {
 			if ((strcmp(r->prev_e, IOSCHED) != 0) &&
 				(strcmp(q->elevator->type->elevator_name, IOSCHED) == 0)) {
@@ -84,7 +77,7 @@ static void change_elevator(struct req_queue_data *r, bool is_suspend)
 	}
 }
 
-static void resume_work_fn(struct work_struct *work)
+static void is_resume_work_fn(struct work_struct *work)
 {
 	struct req_queue_data *r;
 	struct list_head *head = &req_queues.list;
@@ -99,13 +92,19 @@ static void resume_work_fn(struct work_struct *work)
 	}
 }
 
-static void suspend_work_fn(struct work_struct *work)
+static void is_power_suspend(struct power_suspend *h)
 {
 	struct req_queue_data *r;
 	struct list_head *head = &req_queues.list;
 
+	if (resumed) {
+		cancel_delayed_work_sync(&is_resume_work);
+	}
+
+	resumed = false;
+
 	/*
-	 * Switch to fifo/noop when the screen turns off. Purposely block
+	 * Switch to noop when the screen turns off. Purposely block
 	 * the powersuspend notifier chain call in case weird things can happen
 	 * when switching elevators while the screen is off.
 	 */
@@ -114,38 +113,13 @@ static void suspend_work_fn(struct work_struct *work)
 	}
 }
 
-static void is_power_suspend(struct power_suspend *h)
-{
-	if (resumed) {
-		cancel_delayed_work_sync(&resume_work);
-	}
-
-	resumed = false;
-
-	/*
-	 * change from the original to fifo/noop iosched after a delay
-	 * when the screen is turned off.
-	 */
-	queue_delayed_work(is_wq, &suspend_work,
-			msecs_to_jiffies(DELAY_MS));
-
-	suspended = true;
-}
-
 static void is_power_resume(struct power_suspend *h)
 {
-	if (suspended) {
-		cancel_delayed_work_sync(&suspend_work);
-	}
-
-	suspended = false;
-
 	/*
-	 * Switch back from fifo/noop to the original iosched after a delay
+	 * Switch back from noop to the original iosched after a delay
 	 * when the screen is turned on.
 	 */
-	queue_delayed_work(is_wq, &resume_work,
-			msecs_to_jiffies(DELAY_MS));
+	schedule_delayed_work(&is_resume_work, msecs_to_jiffies(DELAY_MS));
 
 	resumed = true;
 }
@@ -174,14 +148,7 @@ int init_iosched_switcher(struct request_queue *q)
 
 static int __init iosched_switcher_core_init(void)
 {
-	is_wq = alloc_workqueue("io_switcher", WQ_HIGHPRI | WQ_MEM_RECLAIM, 0);
-	if (!is_wq) {
-		pr_info("%s: Failed to allocate workqueue\n", __func__);
-		return -ENOMEM;
-	}
-
-	INIT_DELAYED_WORK(&resume_work, resume_work_fn);
-	INIT_DELAYED_WORK(&suspend_work, suspend_work_fn);
+	INIT_DELAYED_WORK(&is_resume_work, is_resume_work_fn);
 	register_power_suspend(&is_power_suspend_handler);
 
 	return 0;
